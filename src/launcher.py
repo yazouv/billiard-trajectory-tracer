@@ -102,8 +102,9 @@ class Launcher(ctk.CTkToplevel):
         self._update_banner.pack(fill="x", padx=24)
         self._render_update_banner()
 
+        # expand=True + anchor: content occupe l'espace restant, cards en haut
         content = ctk.CTkFrame(self, fg_color="transparent")
-        content.pack(fill="x", padx=24, pady=8)
+        content.pack(fill="both", expand=True, padx=24, pady=8, anchor="n")
 
         self._card(content, "Ouvrir un fichier",
                    "Lire une vidéo enregistrée (mp4, mov, avi…).",
