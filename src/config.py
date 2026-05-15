@@ -25,6 +25,12 @@ DEFAULTS = {
 }
 
 
+# Clés systématiquement remises au défaut à chaque démarrage, même si elles
+# ont été sauvegardées dans config.json (UX : on veut que l'app s'ouvre
+# toujours avec ces options décochées).
+FORCE_DEFAULT_KEYS = ("show_table_rect", "show_trail_red")
+
+
 def load():
     data = dict(DEFAULTS)
     if CONFIG_PATH.exists():
@@ -32,6 +38,8 @@ def load():
             data.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, OSError):
             pass
+    for k in FORCE_DEFAULT_KEYS:
+        data[k] = DEFAULTS[k]
     return data
 
 
