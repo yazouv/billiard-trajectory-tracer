@@ -12,7 +12,9 @@ def cyndilib_available():
 
 
 class VideoSource:
-    """Lecture d'un fichier vidéo via cv2.VideoCapture."""
+    """Lecture d'un fichier vidéo via cv2.VideoCapture (seekable)."""
+
+    seekable = True
 
     def __init__(self, path):
         self.cap = cv2.VideoCapture(path)
@@ -21,6 +23,17 @@ class VideoSource:
         self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30.0
         self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    @property
+    def frame_count(self):
+        return int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    @property
+    def position(self):
+        return int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
+
+    def seek(self, frame_idx):
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, int(frame_idx)))
 
     def read(self):
         return self.cap.read()
@@ -31,6 +44,13 @@ class VideoSource:
 
 class NdiSource:
     """Réception d'un flux NDI via cyndilib. Même interface que VideoSource."""
+
+    seekable = False
+    frame_count = 0
+    position = 0
+
+    def seek(self, frame_idx):
+        pass  # flux live : pas de seek possible
 
     def __init__(self, source_name, fps_hint=60.0):
         from cyndilib.finder import Finder

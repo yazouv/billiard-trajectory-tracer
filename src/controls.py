@@ -219,7 +219,7 @@ class Controls(ctk.CTkToplevel):
         # Limite la fréquence d'update() : éviter la réentrance pendant un
         # redraw OpenCV et réduire le risque de crash GIL pendant les events tk.
         now = time.monotonic()
-        if now - self._last_update_ts < 0.05:
+        if now - self._last_update_ts < 0.1:
             return
         self._last_update_ts = now
         try:

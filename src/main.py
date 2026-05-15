@@ -142,13 +142,31 @@ def _run(tk_root, choice, cfg, controls, default_video):
     frame = first
     detections = {}
 
+    # Trackbar de seek pour les sources seekables (fichiers vidéo)
+    seek_state = {"dragging_until": 0.0}
+    if getattr(src, "seekable", False) and src.frame_count > 1:
+        def _on_seek(pos):
+            try:
+                src.seek(pos)
+                trails.clear()
+            except Exception:
+                pass
+            # Empêche la boucle d'écraser la position de l'utilisateur juste après
+            import time as _t
+            seek_state["dragging_until"] = _t.monotonic() + 0.3
+        cv2.createTrackbar("Position", WINDOW, 0,
+                           max(1, src.frame_count - 1), _on_seek)
+
     rec_fps = src.fps if src.fps >= 5 else 30.0
     recorder = PointRecorder(_ensure_dir(controls.captures_dir()), fps=rec_fps)
+    target_frame_ms = 1000.0 / rec_fps
+    import time as _time
     # Si le user n'avait jamais choisi, on affiche le défaut dans Réglages
     if not controls.captures_dir():
         controls.var_captures_dir.set(str(_default_captures_dir()))
 
     while True:
+        loop_start = _time.monotonic()
         if not paused:
             ok, frame = src.read()
             if not ok:
@@ -173,6 +191,15 @@ def _run(tk_root, choice, cfg, controls, default_video):
             if cleared:
                 recorder.rotate()
 
+        # Met à jour la trackbar de position si non draggée
+        if getattr(src, "seekable", False) and not paused:
+            import time as _t
+            if _t.monotonic() >= seek_state["dragging_until"]:
+                try:
+                    cv2.setTrackbarPos("Position", WINDOW, src.position)
+                except cv2.error:
+                    pass
+
         cv2.imshow(WINDOW, display)
         controls.refresh()
 
@@ -186,7 +213,10 @@ def _run(tk_root, choice, cfg, controls, default_video):
         if controls.quit_requested():
             break
 
-        key = cv2.waitKey(1) & 0xFF
+        # Pacing : on vise target_frame_ms par tour pour respecter le fps
+        elapsed_ms = (_time.monotonic() - loop_start) * 1000.0
+        wait_ms = max(1, int(target_frame_ms - elapsed_ms))
+        key = cv2.waitKey(wait_ms) & 0xFF
         if key == 255:  # rien depuis OpenCV → vérifie côté Réglages
             from_ctrl = controls.consume_key()
             if from_ctrl is not None:
