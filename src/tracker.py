@@ -3,7 +3,6 @@ from collections import deque
 import cv2
 import numpy as np
 
-
 MOTION_PIX_THRESHOLD = 6
 MOTION_WINDOW = 10
 STILL_HOLD_SECONDS = 1.0
