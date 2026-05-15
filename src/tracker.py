@@ -26,6 +26,9 @@ class Trajectories:
         self.still_since_frame = None
         self.frame_idx = 0
         self.smooth_window = 3
+        # Snapshots des derniers points (pris juste avant un auto-clear)
+        self.last_snapshot = None  # dict color -> list[(x, y)]
+        self.prev_snapshot = None
 
     def configure(self, **kwargs):
         for k, v in kwargs.items():
@@ -62,6 +65,7 @@ class Trajectories:
             else:
                 still_for = (self.frame_idx - self.still_since_frame) / self.fps
                 if still_for >= STILL_HOLD_SECONDS + KEEP_AFTER_STILL_SECONDS:
+                    self._snapshot_before_clear()
                     self.clear()
                     cleared = True
         else:
@@ -83,6 +87,12 @@ class Trajectories:
                 return False
         return True
 
+    def _snapshot_before_clear(self):
+        snap = {c: list(pts) for c, pts in self.points.items() if pts}
+        if snap:
+            self.prev_snapshot = self.last_snapshot
+            self.last_snapshot = snap
+
     def clear(self):
         for d in self.points.values():
             d.clear()
@@ -90,8 +100,22 @@ class Trajectories:
             d.clear()
         self.still_since_frame = None
 
-    def draw(self, frame, colors_bgr, thickness=2):
+    def draw_snapshot(self, frame, snapshot, colors_bgr, thickness=2):
+        """Dessine les polylines d'un snapshot (dict color -> list[(x,y)])."""
+        if not snapshot:
+            return
+        for color, pts in snapshot.items():
+            if len(pts) < 2:
+                continue
+            arr = _smooth(np.array(pts, dtype=np.float32), self.smooth_window)
+            arr = arr.astype(np.int32).reshape(-1, 1, 2)
+            cv2.polylines(frame, [arr], False, colors_bgr[color],
+                          thickness, cv2.LINE_AA)
+
+    def draw(self, frame, colors_bgr, thickness=2, visible=None):
         for color, pts in self.points.items():
+            if visible is not None and not visible.get(color, True):
+                continue
             if len(pts) < 2:
                 continue
             arr = _smooth(np.array(pts, dtype=np.float32), self.smooth_window)
