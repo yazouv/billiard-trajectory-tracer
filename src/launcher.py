@@ -82,9 +82,17 @@ class Launcher(ctk.CTkToplevel):
     # ---------- Home ----------
     def _build_home(self):
         self._clear()
+        # Footer packé EN PREMIER avec side=bottom : sinon content (expand=True)
+        # avale tout l'espace et le footer disparaît.
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.pack(fill="x", side="bottom", padx=24, pady=16)
+        ctk.CTkButton(footer, text="Quitter", width=120, height=36,
+                      fg_color="transparent", border_width=1,
+                      command=self._on_quit).pack(side="right")
+
         self._header("CAB Replay", f"v{__version__} — choisis une source vidéo")
 
-        # Conteneur du bandeau de mise à jour (rempli si dispo)
+        # Bandeau update (vide tant qu'on n'a pas trouvé de release plus récente)
         self._update_banner = ctk.CTkFrame(self, fg_color="transparent")
         self._update_banner.pack(fill="x", padx=24)
         self._render_update_banner()
@@ -99,12 +107,6 @@ class Launcher(ctk.CTkToplevel):
         self._card(content, "Flux NDI",
                    "Se connecter à une source NDI sur le réseau (OBS, caméra…).",
                    "Choisir un flux", self._on_open_ndi).pack(fill="x")
-
-        footer = ctk.CTkFrame(self, fg_color="transparent")
-        footer.pack(fill="x", side="bottom", padx=24, pady=16)
-        ctk.CTkButton(footer, text="Quitter", width=120, height=36,
-                      fg_color="transparent", border_width=1,
-                      command=self._on_quit).pack(side="right")
 
     def _card(self, parent, title, description, button_text, command):
         card = ctk.CTkFrame(parent, corner_radius=12)
@@ -147,6 +149,17 @@ class Launcher(ctk.CTkToplevel):
 
     def _build_ndi(self):
         self._clear()
+        # Footer EN PREMIER (side=bottom) pour qu'il reste visible
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.pack(fill="x", side="bottom", padx=24, pady=16)
+        ctk.CTkButton(footer, text="Retour", width=110, height=36,
+                      fg_color="transparent", border_width=1,
+                      command=self._build_home).pack(side="left")
+        self._ndi_refresh_btn = ctk.CTkButton(
+            footer, text="Rafraîchir", width=120, height=36,
+            command=self._refresh_ndi)
+        self._ndi_refresh_btn.pack(side="right")
+
         self._header("Flux NDI", "Sources détectées sur le réseau")
 
         body = ctk.CTkFrame(self, fg_color="transparent")
@@ -173,16 +186,6 @@ class Launcher(ctk.CTkToplevel):
         self._ndi_manual.pack(side="left", fill="x", expand=True)
         ctk.CTkButton(row, text="Connecter", width=110, height=32,
                       command=self._on_ndi_manual).pack(side="right", padx=(8, 0))
-
-        footer = ctk.CTkFrame(self, fg_color="transparent")
-        footer.pack(fill="x", side="bottom", padx=24, pady=16)
-        ctk.CTkButton(footer, text="Retour", width=110, height=36,
-                      fg_color="transparent", border_width=1,
-                      command=self._build_home).pack(side="left")
-        self._ndi_refresh_btn = ctk.CTkButton(
-            footer, text="Rafraîchir", width=120, height=36,
-            command=self._refresh_ndi)
-        self._ndi_refresh_btn.pack(side="right")
 
         self._refresh_ndi()
 
