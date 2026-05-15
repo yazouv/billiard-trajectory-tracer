@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 
-
 WINDOW_TITLE = "Ajuste les 4 coins (Entree=valider, R=reset, Echap=annuler)"
 
 _HANDLE_RADIUS = 12
