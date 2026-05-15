@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import sys
 import threading
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog
 
 import customtkinter as ctk
+
+from updater import check_latest
+from version import GITHUB_REPO, __version__
 
 
 def _icon_path():
@@ -48,8 +52,10 @@ class Launcher(ctk.CTkToplevel):
         self._ndi_lister = ndi_lister
         self.protocol("WM_DELETE_WINDOW", self._on_quit)
         _apply_icon(self)
+        self._update_info = None  # (tag, url) si update dispo
         self._build_home()
         self.after(50, self._raise)
+        self._start_update_check()
 
     def _raise(self):
         try:
@@ -76,7 +82,12 @@ class Launcher(ctk.CTkToplevel):
     # ---------- Home ----------
     def _build_home(self):
         self._clear()
-        self._header("CAB Replay", "Choisis une source vidéo pour démarrer")
+        self._header("CAB Replay", f"v{__version__} — choisis une source vidéo")
+
+        # Conteneur du bandeau de mise à jour (rempli si dispo)
+        self._update_banner = ctk.CTkFrame(self, fg_color="transparent")
+        self._update_banner.pack(fill="x", padx=24)
+        self._render_update_banner()
 
         content = ctk.CTkFrame(self, fg_color="transparent")
         content.pack(expand=True, fill="both", padx=24, pady=16)
@@ -174,6 +185,41 @@ class Launcher(ctk.CTkToplevel):
         self._ndi_refresh_btn.pack(side="right")
 
         self._refresh_ndi()
+
+    # ---------- Update check ----------
+    def _start_update_check(self):
+        def worker():
+            try:
+                self._update_info = check_latest(GITHUB_REPO, __version__)
+            except Exception:
+                self._update_info = None
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(800, self._poll_update_check)
+
+    def _poll_update_check(self):
+        if not self.winfo_exists():
+            return
+        if self._update_info is not None:
+            self._render_update_banner()
+            return
+        # Pas encore de réponse : on reteste un peu plus tard
+        self.after(800, self._poll_update_check)
+
+    def _render_update_banner(self):
+        for w in self._update_banner.winfo_children():
+            w.destroy()
+        if not self._update_info:
+            return
+        tag, url = self._update_info
+        bar = ctk.CTkFrame(self._update_banner, corner_radius=10,
+                           fg_color=("#1e6e3a", "#1e6e3a"))
+        bar.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(bar, text=f"Nouvelle version disponible : {tag}",
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color="#ffffff").pack(side="left", padx=12, pady=8)
+        ctk.CTkButton(bar, text="Télécharger", width=110, height=28,
+                      fg_color="#ffffff", text_color="#1e6e3a", hover_color="#dddddd",
+                      command=lambda: webbrowser.open(url)).pack(side="right", padx=8, pady=6)
 
     def _on_ndi_manual(self):
         name = self._ndi_manual.get().strip()

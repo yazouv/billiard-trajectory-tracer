@@ -1,0 +1,4 @@
+__version__ = "0.1.0"
+
+# Repo GitHub utilisé pour la vérification de mise à jour
+GITHUB_REPO = "yazouv/billiard-trajectory-tracer"
