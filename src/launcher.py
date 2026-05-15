@@ -87,24 +87,17 @@ class Launcher(ctk.CTkToplevel):
     # ---------- Home ----------
     def _build_home(self):
         self._clear()
-        # Footer packé EN PREMIER avec side=bottom : sinon content (expand=True)
-        # avale tout l'espace et le footer disparaît.
-        footer = ctk.CTkFrame(self, fg_color="transparent")
-        footer.pack(fill="x", side="bottom", padx=24, pady=16)
-        ctk.CTkButton(footer, text="Quitter", width=120, height=36,
-                      fg_color="transparent", border_width=1,
-                      command=self._on_quit).pack(side="right")
-
+        # Tout en flow vertical (side="top" partout) : header -> banner ->
+        # content -> spacer (expand) -> footer. Pas de mix top/bottom qui
+        # se comporte mal avec customtkinter.
         self._header("CAB Replay", f"v{__version__} — choisis une source vidéo")
 
-        # Bandeau update (vide tant qu'on n'a pas trouvé de release plus récente)
         self._update_banner = ctk.CTkFrame(self, fg_color="transparent")
         self._update_banner.pack(fill="x", padx=24)
         self._render_update_banner()
 
-        # expand=True + anchor: content occupe l'espace restant, cards en haut
         content = ctk.CTkFrame(self, fg_color="transparent")
-        content.pack(fill="both", expand=True, padx=24, pady=8, anchor="n")
+        content.pack(fill="x", padx=24, pady=8)
 
         self._card(content, "Ouvrir un fichier",
                    "Lire une vidéo enregistrée (mp4, mov, avi…).",
@@ -113,6 +106,16 @@ class Launcher(ctk.CTkToplevel):
         self._card(content, "Flux NDI",
                    "Se connecter à une source NDI sur le réseau (OBS, caméra…).",
                    "Choisir un flux", self._on_open_ndi).pack(fill="x")
+
+        # Spacer qui mange tout l'espace restant pour pousser le footer en bas
+        spacer = ctk.CTkFrame(self, fg_color="transparent")
+        spacer.pack(fill="both", expand=True)
+
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.pack(fill="x", padx=24, pady=16)
+        ctk.CTkButton(footer, text="Quitter", width=120, height=36,
+                      fg_color="transparent", border_width=1,
+                      command=self._on_quit).pack(side="right")
 
     def _card(self, parent, title, description, button_text, command):
         card = ctk.CTkFrame(parent, corner_radius=12)
@@ -155,17 +158,6 @@ class Launcher(ctk.CTkToplevel):
 
     def _build_ndi(self):
         self._clear()
-        # Footer EN PREMIER (side=bottom) pour qu'il reste visible
-        footer = ctk.CTkFrame(self, fg_color="transparent")
-        footer.pack(fill="x", side="bottom", padx=24, pady=16)
-        ctk.CTkButton(footer, text="Retour", width=110, height=36,
-                      fg_color="transparent", border_width=1,
-                      command=self._build_home).pack(side="left")
-        self._ndi_refresh_btn = ctk.CTkButton(
-            footer, text="Rafraîchir", width=120, height=36,
-            command=self._refresh_ndi)
-        self._ndi_refresh_btn.pack(side="right")
-
         self._header("Flux NDI", "Sources détectées sur le réseau")
 
         # Si cyndilib n'est pas dispo, affiche un message dédié plutôt qu'une stacktrace
@@ -175,10 +167,8 @@ class Launcher(ctk.CTkToplevel):
         except Exception:
             ndi_ok = False
         if not ndi_ok:
-            body = ctk.CTkFrame(self, fg_color="transparent")
-            body.pack(expand=True, fill="both", padx=24, pady=8)
-            card = ctk.CTkFrame(body, corner_radius=10)
-            card.pack(fill="x", pady=(4, 8))
+            card = ctk.CTkFrame(self, corner_radius=10)
+            card.pack(fill="x", padx=24, pady=(4, 8))
             ctk.CTkLabel(card, text="NDI indisponible",
                          font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", padx=14, pady=(10, 4))
             ctk.CTkLabel(
@@ -189,11 +179,19 @@ class Launcher(ctk.CTkToplevel):
                 font=ctk.CTkFont(size=11),
                 justify="left",
                 text_color=("gray40", "gray80")).pack(anchor="w", padx=14, pady=(0, 12))
-            self._ndi_refresh_btn.configure(state="disabled")
+
+            spacer = ctk.CTkFrame(self, fg_color="transparent")
+            spacer.pack(fill="both", expand=True)
+
+            footer = ctk.CTkFrame(self, fg_color="transparent")
+            footer.pack(fill="x", padx=24, pady=16)
+            ctk.CTkButton(footer, text="Retour", width=110, height=36,
+                          fg_color="transparent", border_width=1,
+                          command=self._build_home).pack(side="left")
             return
 
         body = ctk.CTkFrame(self, fg_color="transparent")
-        body.pack(expand=True, fill="both", padx=24, pady=8)
+        body.pack(fill="x", padx=24, pady=8)
 
         self._ndi_status = ctk.CTkLabel(body, text="Recherche en cours…",
                                         font=ctk.CTkFont(size=13),
@@ -201,11 +199,11 @@ class Launcher(ctk.CTkToplevel):
         self._ndi_status.pack(anchor="w", pady=(0, 8))
 
         self._ndi_list = ctk.CTkScrollableFrame(body, corner_radius=10, height=180)
-        self._ndi_list.pack(fill="both", expand=True)
+        self._ndi_list.pack(fill="x")
 
         # Saisie manuelle, utile si la découverte échoue (firewall, mDNS…)
-        manual = ctk.CTkFrame(body, fg_color="transparent")
-        manual.pack(fill="x", pady=(10, 0))
+        manual = ctk.CTkFrame(self, fg_color="transparent")
+        manual.pack(fill="x", padx=24, pady=(10, 0))
         ctk.CTkLabel(manual, text="Ou saisir manuellement le nom de la source :",
                      font=ctk.CTkFont(size=11),
                      text_color=("gray55", "gray70")).pack(anchor="w")
@@ -216,6 +214,19 @@ class Launcher(ctk.CTkToplevel):
         self._ndi_manual.pack(side="left", fill="x", expand=True)
         ctk.CTkButton(row, text="Connecter", width=110, height=32,
                       command=self._on_ndi_manual).pack(side="right", padx=(8, 0))
+
+        spacer = ctk.CTkFrame(self, fg_color="transparent")
+        spacer.pack(fill="both", expand=True)
+
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.pack(fill="x", padx=24, pady=16)
+        ctk.CTkButton(footer, text="Retour", width=110, height=36,
+                      fg_color="transparent", border_width=1,
+                      command=self._build_home).pack(side="left")
+        self._ndi_refresh_btn = ctk.CTkButton(
+            footer, text="Rafraîchir", width=120, height=36,
+            command=self._refresh_ndi)
+        self._ndi_refresh_btn.pack(side="right")
 
         self._refresh_ndi()
 

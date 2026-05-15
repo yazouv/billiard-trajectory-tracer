@@ -38,7 +38,9 @@ class Controls(ctk.CTkToplevel):
         self.title("Réglages — CAB Replay")
         self.geometry("420x820")
         self.minsize(380, 500)
-        self.resizable(True, True)
+        # Non-resizable : le resize tkinter pendant la boucle cv2 cause des
+        # crashs GIL. Le contenu est de toute facon dans un scrollable frame.
+        self.resizable(False, False)
         self.protocol("WM_DELETE_WINDOW", self._on_close_attempt)
         p = _icon_path()
         if p:
