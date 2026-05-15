@@ -13,8 +13,7 @@ from launcher import show_launcher
 from recorder import PointRecorder
 from table import rect_to_mask, select_table_rect
 from tracker import Trajectories
-
-WINDOW = "CAB Replay"
+from video_view import VideoView
 
 
 def draw_table_outline(frame, rect):
@@ -137,7 +136,8 @@ def _run(tk_root, choice, cfg, controls, default_video):
     trails = Trajectories(fps=src.fps)
     current_mode = choice[0]
 
-    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+    video_view = VideoView(tk_root, title="CAB Replay",
+                           initial_size=(first.shape[1], first.shape[0]))
     rec_fps = src.fps if src.fps >= 5 else 30.0
     recorder = PointRecorder(_ensure_dir(controls.captures_dir()), fps=rec_fps)
     if not controls.captures_dir():
@@ -212,14 +212,11 @@ def _run(tk_root, choice, cfg, controls, default_video):
             except Exception as e:
                 print(f"Seek error: {e}")
 
-        cv2.imshow(WINDOW, display)
+        # Rendu vidéo dans la fenêtre tkinter (plus de cv2.imshow)
+        video_view.show_frame(display)
 
-        # Croix fenêtre vidéo
-        try:
-            if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
-                stop()
-                return
-        except cv2.error:
+        # Croix de la fenêtre vidéo (X)
+        if video_view.quit_requested():
             stop()
             return
 
@@ -228,13 +225,12 @@ def _run(tk_root, choice, cfg, controls, default_video):
             stop()
             return
 
-        # Lit les évènements clavier de la fenêtre cv2 ET les touches forwardées
-        # depuis Réglages. waitKey(1) suffit, c'est tk qui pilote la cadence.
-        key = cv2.waitKey(1) & 0xFF
-        if key == 255:
-            from_ctrl = controls.consume_key()
-            if from_ctrl is not None:
-                key = from_ctrl & 0xFF
+        # Touches : depuis VideoView OU Réglages (queues tkinter)
+        key = video_view.consume_key()
+        if key is None:
+            key = controls.consume_key()
+        if key is None:
+            key = 0  # rien
 
         if key in (ord('q'), 27):
             stop()
@@ -309,6 +305,10 @@ def _run(tk_root, choice, cfg, controls, default_video):
     state["running"] = False
     state["recorder"].close()
     state["src"].release()
+    try:
+        video_view.destroy()
+    except Exception:
+        pass
     controls.close()
     cv2.destroyAllWindows()
 
