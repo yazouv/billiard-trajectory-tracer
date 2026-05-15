@@ -138,153 +138,177 @@ def _run(tk_root, choice, cfg, controls, default_video):
     current_mode = choice[0]
 
     cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
-    paused = False
-    frame = first
-    detections = {}
-
-    # Le seek se fait via le slider de la fenêtre Réglages (controls)
-
     rec_fps = src.fps if src.fps >= 5 else 30.0
     recorder = PointRecorder(_ensure_dir(controls.captures_dir()), fps=rec_fps)
-    target_frame_ms = 1000.0 / rec_fps
-    import time as _time
-    # Si le user n'avait jamais choisi, on affiche le défaut dans Réglages
     if not controls.captures_dir():
         controls.var_captures_dir.set(str(_default_captures_dir()))
 
-    while True:
-        loop_start = _time.monotonic()
+    target_frame_ms = max(1, int(1000.0 / rec_fps))
+
+    # État partagé entre tick() et le reste de la fonction
+    state = {
+        "src": src,
+        "frame": first,
+        "detections": {},
+        "table_rect": table_rect,
+        "table_mask": table_mask,
+        "trails": trails,
+        "recorder": recorder,
+        "current_mode": current_mode,
+        "running": True,
+    }
+
+    def stop():
+        state["running"] = False
+        try:
+            tk_root.quit()
+        except Exception:
+            pass
+
+    def tick():
+        if not state["running"]:
+            return
+        s = state
+        paused = controls.is_paused()
+        cleared = False
+
         if not paused:
-            ok, frame = src.read()
+            ok, fr = s["src"].read()
             if not ok:
-                if current_mode == "ndi":
-                    cv2.waitKey(10)
-                    continue
-                break
-            detections = detect_balls(frame, roi_mask=table_mask)
-            trails.configure(smooth_window=controls.smooth_window())
-            cleared = trails.update(detections)
+                if s["current_mode"] == "ndi":
+                    tk_root.after(10, tick)
+                    return
+                stop()
+                return
+            s["frame"] = fr
+            s["detections"] = detect_balls(fr, roi_mask=s["table_mask"])
+            s["trails"].configure(smooth_window=controls.smooth_window())
+            cleared = s["trails"].update(s["detections"])
 
-        display = frame.copy()
-        trails.draw(display, DRAW_COLORS_BGR, visible=controls.visible_trails())
+        display = s["frame"].copy()
+        s["trails"].draw(display, DRAW_COLORS_BGR, visible=controls.visible_trails())
         if controls.show_table_rect():
-            draw_table_outline(display, table_rect)
+            draw_table_outline(display, s["table_rect"])
         if controls.show_balls():
-            draw_balls(display, detections)
+            draw_balls(display, s["detections"])
 
-        # Enregistre la frame affichée (avec traces + overlays) dans le mp4 en cours
         if not paused:
-            recorder.write(display)
+            s["recorder"].write(display)
             if cleared:
-                recorder.rotate()
+                s["recorder"].rotate()
 
-        # Synchronise l'état de lecture vers Réglages (slider + time label)
         controls.set_playback_info(
-            position=getattr(src, "position", 0),
-            total=getattr(src, "frame_count", 0),
-            fps=src.fps,
-            seekable=getattr(src, "seekable", False),
+            position=getattr(s["src"], "position", 0),
+            total=getattr(s["src"], "frame_count", 0),
+            fps=s["src"].fps,
+            seekable=getattr(s["src"], "seekable", False),
         )
 
-        # Demande de seek faite par l'utilisateur sur le slider
         seek_to = controls.consume_seek()
         if seek_to is not None:
             try:
-                src.seek(seek_to)
-                trails.clear()
+                s["src"].seek(seek_to)
+                s["trails"].clear()
             except Exception as e:
                 print(f"Seek error: {e}")
 
-        # Synchronise pause depuis Réglages
-        paused = controls.is_paused()
-
         cv2.imshow(WINDOW, display)
-        controls.refresh()
 
-        # Croix de la fenêtre vidéo cliquée
+        # Croix fenêtre vidéo
         try:
             if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
-                break
+                stop()
+                return
         except cv2.error:
-            break
-        # Croix de la fenêtre Réglages cliquée
-        if controls.quit_requested():
-            break
+            stop()
+            return
 
-        # Pacing : on vise target_frame_ms par tour pour respecter le fps
-        elapsed_ms = (_time.monotonic() - loop_start) * 1000.0
-        wait_ms = max(1, int(target_frame_ms - elapsed_ms))
-        key = cv2.waitKey(wait_ms) & 0xFF
-        if key == 255:  # rien depuis OpenCV → vérifie côté Réglages
+        # Croix Réglages
+        if controls.quit_requested():
+            stop()
+            return
+
+        # Lit les évènements clavier de la fenêtre cv2 ET les touches forwardées
+        # depuis Réglages. waitKey(1) suffit, c'est tk qui pilote la cadence.
+        key = cv2.waitKey(1) & 0xFF
+        if key == 255:
             from_ctrl = controls.consume_key()
             if from_ctrl is not None:
                 key = from_ctrl & 0xFF
+
         if key in (ord('q'), 27):
-            break
+            stop()
+            return
         elif key == ord(' '):
             controls.toggle_pause()
-            paused = controls.is_paused()
         elif key == ord('c'):
-            trails.clear()
+            s["trails"].clear()
         elif key == ord('r'):
-            new_rect = select_table_rect(frame)
-            table_rect = new_rect
-            table_mask = rect_to_mask(frame.shape, table_rect)
-            trails.clear()
-            config.save({"table_rect": list(table_rect)})
-            print(f"Zone redéfinie : {table_rect}")
+            new_rect = select_table_rect(s["frame"])
+            s["table_rect"] = new_rect
+            s["table_mask"] = rect_to_mask(s["frame"].shape, new_rect)
+            s["trails"].clear()
+            config.save({"table_rect": list(new_rect)})
+            print(f"Zone redéfinie : {new_rect}")
         elif key == ord('m'):
             new_choice = pick_source(tk_root, default_video)
-            if new_choice is None:
-                continue
-            src.release()
-            try:
-                src = open_source(new_choice)
-            except Exception as e:
-                print(f"Erreur ouverture source : {e}")
-                break
-            current_mode = new_choice[0]
-            trails = Trajectories(fps=src.fps)
-            frame = _read_first_frame(src, current_mode)
-            if frame is None:
-                print("Source vide.")
-                break
-            table_mask = rect_to_mask(frame.shape, table_rect)
-            recorder.close()
-            recorder = PointRecorder(
-                _ensure_dir(controls.captures_dir()),
-                fps=src.fps if src.fps >= 5 else 30.0,
-            )
-            print(f"Source: {new_choice[1]}  {src.width}x{src.height} @ {src.fps:.1f} fps")
+            if new_choice is not None:
+                s["src"].release()
+                try:
+                    s["src"] = open_source(new_choice)
+                except Exception as e:
+                    print(f"Erreur ouverture source : {e}")
+                    stop()
+                    return
+                s["current_mode"] = new_choice[0]
+                s["trails"] = Trajectories(fps=s["src"].fps)
+                fr2 = _read_first_frame(s["src"], s["current_mode"])
+                if fr2 is None:
+                    print("Source vide.")
+                    stop()
+                    return
+                s["frame"] = fr2
+                s["table_mask"] = rect_to_mask(fr2.shape, s["table_rect"])
+                s["recorder"].close()
+                s["recorder"] = PointRecorder(
+                    _ensure_dir(controls.captures_dir()),
+                    fps=s["src"].fps if s["src"].fps >= 5 else 30.0,
+                )
+                print(f"Source: {new_choice[1]}  {s['src'].width}x{s['src'].height} @ {s['src'].fps:.1f} fps")
         elif key == ord('s'):
-            config.save(controls.snapshot() | {"table_rect": list(table_rect)})
+            config.save(controls.snapshot() | {"table_rect": list(s["table_rect"])})
             print("Config sauvegardée.")
 
         if controls.consume_save_request():
-            config.save(controls.snapshot() | {"table_rect": list(table_rect)})
+            config.save(controls.snapshot() | {"table_rect": list(s["table_rect"])})
             print("Config sauvegardée.")
 
         if controls.consume_save_last():
-            recorder.dir = _ensure_dir(controls.captures_dir())
-            started = recorder.save_last(
+            s["recorder"].dir = _ensure_dir(controls.captures_dir())
+            started = s["recorder"].save_last(
                 on_done=lambda p: print(f"Dernier point sauvé : {p}" if p else
                                         "Erreur lors de la sauvegarde du dernier point."))
-            if not started:
-                print("Aucun dernier point disponible (le point doit s'être terminé).")
-            else:
-                print("Encodage du dernier point en cours…")
+            print("Encodage du dernier point en cours…" if started else
+                  "Aucun dernier point disponible (le point doit s'être terminé).")
         if controls.consume_save_prev():
-            recorder.dir = _ensure_dir(controls.captures_dir())
-            started = recorder.save_prev(
+            s["recorder"].dir = _ensure_dir(controls.captures_dir())
+            started = s["recorder"].save_prev(
                 on_done=lambda p: print(f"Avant-dernier point sauvé : {p}" if p else
                                         "Erreur lors de la sauvegarde de l'avant-dernier point."))
-            if not started:
-                print("Aucun avant-dernier point disponible.")
-            else:
-                print("Encodage de l'avant-dernier point en cours…")
+            print("Encodage de l'avant-dernier point en cours…" if started else
+                  "Aucun avant-dernier point disponible.")
 
-    recorder.close()
-    src.release()
+        # Re-schedule le prochain tick : tk pilote le rythme et l'event loop
+        tk_root.after(target_frame_ms, tick)
+
+    tk_root.after(0, tick)
+    # tk owns the main loop : moves/resizes/clicks de tk passent par lui,
+    # cv2 ne traite plus de messages Windows en parallèle.
+    tk_root.mainloop()
+
+    state["running"] = False
+    state["recorder"].close()
+    state["src"].release()
     controls.close()
     cv2.destroyAllWindows()
 
