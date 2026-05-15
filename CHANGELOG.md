@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/yazouv/billiard-trajectory-tracer/compare/v0.1.3...v0.1.4) (2026-05-15)
+
+
+### Bug Fixes
+
+* **exe:** pas de fenetre console + layout d'accueil corrige ([e0ada1c](https://github.com/yazouv/billiard-trajectory-tracer/commit/e0ada1c061756cec85ff4ce441601a7a163182ce))
+
 ## [0.1.3](https://github.com/yazouv/billiard-trajectory-tracer/compare/v0.1.2...v0.1.3) (2026-05-15)
 
 
