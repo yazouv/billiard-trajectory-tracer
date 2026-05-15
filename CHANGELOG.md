@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.3](https://github.com/yazouv/billiard-trajectory-tracer/compare/v0.1.2...v0.1.3) (2026-05-15)
+
+
+### Features
+
+* **launcher:** message gracieux si cyndilib ou NDI Runtime manquant ([cfe9abb](https://github.com/yazouv/billiard-trajectory-tracer/commit/cfe9abb632069f703387576b499d36d2dd22d0af))
+
+
+### Bug Fixes
+
+* **ci:** release-please build l'exe dans le meme workflow ([d95e94f](https://github.com/yazouv/billiard-trajectory-tracer/commit/d95e94fb652f0fa3f87aadda47ed1fccb24e8ee4))
+
 ## [0.1.2](https://github.com/yazouv/billiard-trajectory-tracer/compare/v0.1.1...v0.1.2) (2026-05-15)
 
 
