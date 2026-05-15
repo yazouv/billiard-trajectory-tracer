@@ -12,15 +12,17 @@ from capture import NdiSource, VideoSource, list_ndi_sources
 from controls import Controls
 from detector import DRAW_COLORS_BGR, detect_balls
 from launcher import show_launcher
+from obs_client import ObsClient
 from recorder import PointRecorder
-from table import rect_to_mask, select_table_rect
+from table import quad_to_mask, rect_to_quad, select_table_quad
 from tracker import Trajectories
 from video_view import VideoView
 
 
-def draw_table_outline(frame, rect):
-    x, y, w, h = rect
-    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 1)
+def draw_table_outline(frame, quad):
+    import numpy as np
+    pts = np.array(quad, dtype=np.int32)
+    cv2.polylines(frame, [pts], isClosed=True, color=(0, 255, 0), thickness=1)
 
 
 def draw_balls(frame, detections):
@@ -126,14 +128,19 @@ def _run(tk_root, choice, cfg, controls, default_video):
     if first is None:
         raise RuntimeError("Source vide (aucune frame reçue dans le délai imparti)")
 
-    if cfg.get("table_rect"):
-        table_rect = tuple(cfg["table_rect"])
-        print(f"Zone chargée depuis config : {table_rect}")
-    else:
-        table_rect = select_table_rect(first)
-        config.save({"table_rect": list(table_rect)})
-        print(f"Zone sélectionnée : {table_rect}")
-    table_mask = rect_to_mask(first.shape, table_rect)
+    table_quad = None
+    if cfg.get("table_quad"):
+        table_quad = [list(p) for p in cfg["table_quad"]]
+        print(f"Zone chargée depuis config : {table_quad}")
+    elif cfg.get("table_rect"):
+        # Migration : ancien rectangle -> quad, on laisse l'utilisateur ajuster.
+        table_quad = rect_to_quad(tuple(cfg["table_rect"]))
+        print(f"Migration table_rect -> table_quad : {table_quad}")
+    if table_quad is None:
+        table_quad = select_table_quad(first)
+        config.save({"table_quad": table_quad})
+        print(f"Zone sélectionnée : {table_quad}")
+    table_mask = quad_to_mask(first.shape, table_quad)
 
     trails = Trajectories(fps=src.fps)
     current_mode = choice[0]
@@ -145,13 +152,38 @@ def _run(tk_root, choice, cfg, controls, default_video):
     if not controls.captures_dir():
         controls.var_captures_dir.set(str(_default_captures_dir()))
 
+    obs = ObsClient()
+
+    def _obs_test(settings):
+        def run():
+            ok, msg = obs.test(settings["host"], settings["port"], settings["password"])
+            try:
+                tk_root.after(0, lambda: controls.set_obs_test_result(ok, msg))
+            except Exception:
+                pass
+        threading.Thread(target=run, daemon=True).start()
+
+    controls.set_obs_test_callback(_obs_test)
+
+    def _maybe_play_in_obs(path):
+        if path is None:
+            return
+        s = controls.obs_settings()
+        if not s["enabled"]:
+            return
+        obs.play_async(
+            path, s["host"], s["port"], s["password"], s["scene"], s["source"],
+            on_done=lambda ok: print("OBS: replay lancé." if ok else
+                                     "OBS: échec de la lecture (voir logs)."),
+        )
+
     # État partagé worker <-> tk. Lock protège les swaps de gros objets.
     state_lock = threading.Lock()
     state = {
         "src": src,
         "trails": trails,
         "table_mask": table_mask,
-        "table_rect": table_rect,
+        "table_quad": table_quad,
         "recorder": recorder,
         "mode": current_mode,
         "running": True,
@@ -199,7 +231,7 @@ def _run(tk_root, choice, cfg, controls, default_video):
 
             with state_lock:
                 mask = state["table_mask"]
-                rect = state["table_rect"]
+                quad = state["table_quad"]
                 rs = state["render_state"]
                 trails_ref = state["trails"]
                 recorder_ref = state["recorder"]
@@ -212,7 +244,7 @@ def _run(tk_root, choice, cfg, controls, default_video):
             trails_ref.draw(display, DRAW_COLORS_BGR,
                             visible=rs.get("visible_trails"))
             if rs.get("show_table_rect"):
-                draw_table_outline(display, rect)
+                draw_table_outline(display, quad)
             if rs.get("show_balls"):
                 draw_balls(display, detections)
 
@@ -276,6 +308,17 @@ def _run(tk_root, choice, cfg, controls, default_video):
 
         state["paused"] = controls.is_paused()
 
+        # État live des replays (bandeau + couleurs des boutons)
+        try:
+            controls.set_replay_state(state["recorder"].state())
+        except Exception:
+            pass
+
+        # Visibilité du bouton "Couper le replay" : seulement si OBS est sur la scène Replay
+        s = controls.obs_settings()
+        cur = obs.current_scene_name() if s["enabled"] else None
+        controls.set_on_replay_scene(bool(cur) and cur == s["scene"])
+
         if video_view.quit_requested() or controls.quit_requested():
             state["running"] = False
             tk_root.quit()
@@ -300,15 +343,15 @@ def _run(tk_root, choice, cfg, controls, default_video):
                 snap = state["last_display"]
             if snap is not None:
                 try:
-                    new_rect = select_table_rect(snap.copy())
+                    new_quad = select_table_quad(snap.copy(), initial_quad=state["table_quad"])
                     with state_lock:
-                        state["table_rect"] = new_rect
-                        state["table_mask"] = rect_to_mask(snap.shape, new_rect)
+                        state["table_quad"] = new_quad
+                        state["table_mask"] = quad_to_mask(snap.shape, new_quad)
                         state["trails"].clear()
-                    config.save({"table_rect": list(new_rect)})
-                    print(f"Zone redéfinie : {new_rect}")
+                    config.save({"table_quad": new_quad})
+                    print(f"Zone redéfinie : {new_quad}")
                 except Exception as e:
-                    print(f"selectROI error: {e}")
+                    print(f"selectQuad error: {e}")
             state["paused"] = was_paused
         elif key == ord('m'):
             new_choice = pick_source(tk_root, default_video)
@@ -317,30 +360,55 @@ def _run(tk_root, choice, cfg, controls, default_video):
                     start_worker()
         elif key == ord('s'):
             with state_lock:
-                rect = state["table_rect"]
-            config.save(controls.snapshot() | {"table_rect": list(rect)})
+                quad = state["table_quad"]
+            config.save(controls.snapshot() | {"table_quad": quad})
             print("Config sauvegardée.")
+
+        if controls.consume_promote():
+            new_path = state["recorder"].promote_last_to_highlights()
+            if new_path is not None:
+                controls.set_promote_status(f"★ Gardé : {new_path.name}", ok=True)
+                print(f"Highlight : {new_path}")
+            else:
+                controls.set_promote_status(
+                    "Aucune capture récente à promouvoir.", ok=False)
+
+        if controls.consume_obs_stop():
+            s = controls.obs_settings()
+            obs.stop_and_return_async(s["host"], s["port"], s["password"], s["source"])
 
         if controls.consume_save_request():
             with state_lock:
-                rect = state["table_rect"]
-            config.save(controls.snapshot() | {"table_rect": list(rect)})
+                quad = state["table_quad"]
+            config.save(controls.snapshot() | {"table_quad": quad})
             print("Config sauvegardée.")
 
         if controls.consume_save_last():
             with state_lock:
                 state["recorder"].dir = _ensure_dir(controls.captures_dir())
-                started = state["recorder"].save_last(
-                    on_done=lambda p: print(f"Dernier point sauvé : {p}" if p else
-                                            "Erreur sauvegarde dernier point."))
+
+                def _on_last_done(p):
+                    print(f"Dernier point sauvé : {p}" if p else
+                          "Erreur sauvegarde dernier point.")
+                    if p is not None:
+                        state["recorder"].prune(controls.captures_keep())
+                    _maybe_play_in_obs(p)
+
+                started = state["recorder"].save_last(on_done=_on_last_done)
             print("Encodage du dernier point en cours…" if started else
                   "Aucun dernier point disponible.")
         if controls.consume_save_prev():
             with state_lock:
                 state["recorder"].dir = _ensure_dir(controls.captures_dir())
-                started = state["recorder"].save_prev(
-                    on_done=lambda p: print(f"Avant-dernier point sauvé : {p}" if p else
-                                            "Erreur sauvegarde avant-dernier."))
+
+                def _on_prev_done(p):
+                    print(f"Avant-dernier point sauvé : {p}" if p else
+                          "Erreur sauvegarde avant-dernier.")
+                    if p is not None:
+                        state["recorder"].prune(controls.captures_keep())
+                    _maybe_play_in_obs(p)
+
+                started = state["recorder"].save_prev(on_done=_on_prev_done)
             print("Encodage de l'avant-dernier point en cours…" if started else
                   "Aucun avant-dernier point disponible.")
 
@@ -355,6 +423,7 @@ def _run(tk_root, choice, cfg, controls, default_video):
     while state["worker_alive"] and time.monotonic() < deadline:
         time.sleep(0.02)
     state["recorder"].close()
+    obs.disconnect()
     state["src"].release()
     try:
         video_view.destroy()
@@ -393,7 +462,7 @@ def _switch_source(state, state_lock, controls, new_choice, tk_root):
         state["src"] = new_src
         state["mode"] = new_choice[0]
         state["trails"] = Trajectories(fps=new_src.fps)
-        state["table_mask"] = rect_to_mask(fr2.shape, state["table_rect"])
+        state["table_mask"] = quad_to_mask(fr2.shape, state["table_quad"])
         state["last_display"] = fr2
         state["recorder"].close()
         state["recorder"] = PointRecorder(

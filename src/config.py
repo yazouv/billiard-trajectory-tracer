@@ -13,7 +13,8 @@ def _app_root():
 CONFIG_PATH = _app_root() / "config.json"
 
 DEFAULTS = {
-    "table_rect": None,        # [x, y, w, h] ou None
+    "table_quad": None,        # [[x,y]*4] (TL,TR,BR,BL) ou None
+    "table_rect": None,        # legacy [x, y, w, h], migré au chargement
     "smooth_window": 3,
     "show_balls": False,
     "show_table_rect": False,
@@ -22,6 +23,14 @@ DEFAULTS = {
     "show_trail_red": False,
     "input_mode": "video",     # "video" ou "ndi"
     "captures_dir": "",        # vide → ./captures à côté de l'app
+    "captures_keep": 20,       # max de mp4 conservés dans le dossier (rotation FIFO)
+    # OBS WebSocket (lecture auto du replay)
+    "obs_enabled": False,
+    "obs_host": "localhost",
+    "obs_port": 4455,
+    "obs_password": "",
+    "obs_scene": "Replay",
+    "obs_source": "CABReplayMedia",
 }
 
 

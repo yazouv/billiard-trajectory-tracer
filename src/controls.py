@@ -36,8 +36,8 @@ class Controls(ctk.CTkToplevel):
     def __init__(self, master, initial):
         super().__init__(master)
         self.title("Réglages — CAB Replay")
-        self.geometry("420x820")
-        self.minsize(380, 500)
+        self.geometry("880x720")
+        self.minsize(780, 560)
         # Non-resizable : le resize tkinter pendant la boucle cv2 cause des
         # crashs GIL. Le contenu est de toute facon dans un scrollable frame.
         self.resizable(False, False)
@@ -52,9 +52,21 @@ class Controls(ctk.CTkToplevel):
         self._quit_pending = False  # croix Reglages cliquée
         self._save_last_pending = False
         self._save_prev_pending = False
+        self._obs_stop_pending = False
+        self._promote_pending = False
         self._key_queue = []  # touches récupérées via tkinter, drainées par main.py
         self._last_update_ts = 0.0
         self.var_captures_dir = ctk.StringVar(value=str(initial.get("captures_dir", "")))
+        self.var_captures_keep = ctk.StringVar(value=str(int(initial.get("captures_keep", 20))))
+
+        # OBS
+        self.var_obs_enabled  = ctk.BooleanVar(value=bool(initial.get("obs_enabled", False)))
+        self.var_obs_host     = ctk.StringVar(value=str(initial.get("obs_host", "localhost")))
+        self.var_obs_port     = ctk.StringVar(value=str(initial.get("obs_port", 4455)))
+        self.var_obs_password = ctk.StringVar(value=str(initial.get("obs_password", "")))
+        self.var_obs_scene    = ctk.StringVar(value=str(initial.get("obs_scene", "Replay")))
+        self.var_obs_source   = ctk.StringVar(value=str(initial.get("obs_source", "CABReplayMedia")))
+        self._obs_test_cb = None  # main.py injectera un callback
 
         # Lecture (slider + play/pause)
         self._paused = False
@@ -83,7 +95,7 @@ class Controls(ctk.CTkToplevel):
 
     # ---------- UI ----------
     def _build_ui(self):
-        # Header fixe en haut + footer (bouton Save) en bas + scrollable au milieu
+        # Header fixe en haut + footer (bouton Save) en bas + 2 colonnes au milieu
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=18, pady=(18, 8))
         ctk.CTkLabel(header, text="Réglages",
@@ -94,13 +106,27 @@ class Controls(ctk.CTkToplevel):
         ctk.CTkButton(footer, text="Sauvegarder la config", height=38,
                       command=self._on_save_clicked).pack(fill="x")
 
-        outer = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        outer.pack(fill="both", expand=True, padx=8, pady=(0, 4))
+        cols = ctk.CTkFrame(self, fg_color="transparent")
+        cols.pack(fill="both", expand=True, padx=8, pady=(0, 4))
 
+        left = ctk.CTkScrollableFrame(
+            cols, fg_color="transparent", label_text="Paramètres",
+            label_font=ctk.CTkFont(size=14, weight="bold"))
+        left.pack(side="left", fill="both", expand=True, padx=(0, 4))
+
+        right = ctk.CTkScrollableFrame(
+            cols, fg_color="transparent", label_text="Replays",
+            label_font=ctk.CTkFont(size=14, weight="bold"))
+        right.pack(side="left", fill="both", expand=True, padx=(4, 0))
+
+        self._build_left_column(left)
+        self._build_right_column(right)
+
+    def _build_left_column(self, outer):
         # Section Lecture (slider + play/pause), masquée si la source ne supporte pas
         self._playback_section = self._section(outer, "Lecture")
         self._build_playback_ui(self._playback_section)
-        self._playback_section.pack_forget()  # caché tant que main.py n'a pas signalé une source seekable
+        self._playback_section.pack_forget()
 
         # Section Affichage
         aff = self._section(outer, "Affichage")
@@ -129,33 +155,6 @@ class Controls(ctk.CTkToplevel):
         )
         slider.pack(fill="x", padx=14, pady=(0, 12))
 
-        # Section captures de point
-        cap = self._section(outer, "Captures du point")
-        ctk.CTkLabel(cap,
-                     text="Exporte le point (vidéo + traces dessinées) en MP4.",
-                     font=ctk.CTkFont(size=11),
-                     text_color=("gray50", "gray70")).pack(anchor="w", padx=14)
-        btns = ctk.CTkFrame(cap, fg_color="transparent")
-        btns.pack(fill="x", padx=14, pady=(8, 12))
-        ctk.CTkButton(btns, text="Dernier point", height=32,
-                      command=self._on_save_last).pack(side="left", expand=True, fill="x", padx=(0, 6))
-        ctk.CTkButton(btns, text="Avant-dernier", height=32,
-                      command=self._on_save_prev).pack(side="left", expand=True, fill="x", padx=(6, 0))
-
-        # Dossier des replays
-        ctk.CTkLabel(cap, text="Dossier de sortie :",
-                     font=ctk.CTkFont(size=11),
-                     text_color=("gray45", "gray70")).pack(anchor="w", padx=14, pady=(4, 0))
-        row = ctk.CTkFrame(cap, fg_color="transparent")
-        row.pack(fill="x", padx=14, pady=(4, 12))
-        self._dir_label = ctk.CTkLabel(
-            row, textvariable=self.var_captures_dir,
-            font=ctk.CTkFont(size=11), anchor="w",
-            text_color=("gray30", "gray85"))
-        self._dir_label.pack(side="left", fill="x", expand=True)
-        ctk.CTkButton(row, text="Changer…", width=90, height=28,
-                      command=self._on_pick_dir).pack(side="right", padx=(8, 0))
-
         # Section raccourcis
         shortcuts = ctk.CTkFrame(outer, corner_radius=10)
         shortcuts.pack(fill="x", pady=(4, 12))
@@ -172,6 +171,108 @@ class Controls(ctk.CTkToplevel):
                          font=ctk.CTkFont(size=11),
                          text_color=("gray45", "gray75")).pack(anchor="w", padx=14)
         ctk.CTkLabel(shortcuts, text="").pack(pady=2)
+
+    def _build_right_column(self, outer):
+        # Bandeau d'état live (point en cours / clipable / idle)
+        self._status_card = ctk.CTkFrame(outer, corner_radius=10,
+                                         fg_color=("gray85", "gray20"))
+        self._status_card.pack(fill="x", pady=(0, 10))
+        self._status_dot = ctk.CTkLabel(
+            self._status_card, text="●", font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=("gray45", "gray60"))
+        self._status_dot.pack(side="left", padx=(14, 8), pady=10)
+        self._status_text = ctk.CTkLabel(
+            self._status_card, text="En attente d'un point…",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=("gray25", "gray85"), anchor="w")
+        self._status_text.pack(side="left", fill="x", expand=True, pady=10)
+        self._status_subtext = ctk.CTkLabel(
+            self._status_card, text="", font=ctk.CTkFont(size=11),
+            text_color=("gray45", "gray60"))
+        self._status_subtext.pack(side="right", padx=(8, 14), pady=10)
+
+        # Section captures de point
+        cap = self._section(outer, "Captures du point")
+        ctk.CTkLabel(cap,
+                     text="Exporte le point (vidéo + traces dessinées) en MP4.",
+                     font=ctk.CTkFont(size=11),
+                     text_color=("gray50", "gray70")).pack(anchor="w", padx=14)
+        btns = ctk.CTkFrame(cap, fg_color="transparent")
+        btns.pack(fill="x", padx=14, pady=(8, 8))
+        self._btn_save_last = ctk.CTkButton(
+            btns, text="Dernier point", height=32,
+            command=self._on_save_last,
+            border_width=2)
+        self._btn_save_last.pack(side="left", expand=True, fill="x", padx=(0, 6))
+        self._btn_save_prev = ctk.CTkButton(
+            btns, text="Avant-dernier", height=32,
+            command=self._on_save_prev,
+            border_width=2)
+        self._btn_save_prev.pack(side="left", expand=True, fill="x", padx=(6, 0))
+        # Couleurs mémorisées pour le toggle dispo/indispo
+        self._btn_default_fg = self._btn_save_last.cget("fg_color")
+
+        # Bouton "Couper le replay" : affiché seulement quand OBS est sur la scène Replay
+        self._obs_stop_row = ctk.CTkFrame(cap, fg_color="transparent")
+        # Pas de pack ici : géré par set_on_replay_scene()
+        ctk.CTkButton(self._obs_stop_row,
+                      text="⏹  Couper le replay en cours", height=30,
+                      fg_color=("#b03a3a", "#a33"),
+                      hover_color=("#8a2a2a", "#822"),
+                      command=self._on_obs_stop).pack(fill="x")
+        self._obs_stop_visible = False
+
+        # Bouton highlight
+        ctk.CTkButton(cap, text="★  Garder le dernier en highlight", height=30,
+                      fg_color=("#b58a00", "#caa83a"),
+                      hover_color=("#8c6b00", "#a18225"),
+                      text_color=("white", "black"),
+                      command=self._on_promote).pack(fill="x", padx=14, pady=(0, 8))
+        self._promote_status_label = ctk.CTkLabel(
+            cap, text="", font=ctk.CTkFont(size=11),
+            text_color=("gray45", "gray70"), anchor="w", justify="left",
+            wraplength=370)
+        self._promote_status_label.pack(fill="x", padx=14, pady=(0, 8))
+
+        # Rotation auto
+        row = ctk.CTkFrame(cap, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=(2, 8))
+        ctk.CTkLabel(row, text="Garder les N derniers :", width=170, anchor="w",
+                     font=ctk.CTkFont(size=12)).pack(side="left")
+        ctk.CTkEntry(row, textvariable=self.var_captures_keep,
+                     width=70, height=28).pack(side="left")
+
+        # Dossier des replays
+        ctk.CTkLabel(cap, text="Dossier de sortie :",
+                     font=ctk.CTkFont(size=11),
+                     text_color=("gray45", "gray70")).pack(anchor="w", padx=14, pady=(4, 0))
+        row = ctk.CTkFrame(cap, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=(4, 12))
+        self._dir_label = ctk.CTkLabel(
+            row, textvariable=self.var_captures_dir,
+            font=ctk.CTkFont(size=11), anchor="w",
+            text_color=("gray30", "gray85"))
+        self._dir_label.pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(row, text="Changer…", width=90, height=28,
+                      command=self._on_pick_dir).pack(side="right", padx=(8, 0))
+
+        # Section OBS
+        obs = self._section(outer, "OBS (lecture auto du replay)")
+        self._switch(obs, "Activer la lecture auto dans OBS", self.var_obs_enabled)
+        self._labeled_entry(obs, "Hôte", self.var_obs_host)
+        self._labeled_entry(obs, "Port", self.var_obs_port)
+        self._labeled_entry(obs, "Mot de passe", self.var_obs_password, show="*")
+        self._labeled_entry(obs, "Scène", self.var_obs_scene)
+        self._labeled_entry(obs, "Source média", self.var_obs_source)
+        row = ctk.CTkFrame(obs, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=(4, 4))
+        ctk.CTkButton(row, text="Tester la connexion", height=30,
+                      command=self._on_obs_test).pack(side="left", expand=True, fill="x")
+        self._obs_status_label = ctk.CTkLabel(
+            obs, text="", font=ctk.CTkFont(size=11),
+            text_color=("gray45", "gray70"), anchor="w", justify="left",
+            wraplength=370)
+        self._obs_status_label.pack(fill="x", padx=14, pady=(2, 10))
 
     def _build_playback_ui(self, parent):
         # Ligne 1 : bouton play/pause + label MM:SS / MM:SS
@@ -203,6 +304,16 @@ class Controls(ctk.CTkToplevel):
                      text_color=("gray40", "gray80")).pack(anchor="w", padx=14, pady=(10, 4))
         return card
 
+    def _labeled_entry(self, parent, label, var, show=None):
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=3)
+        ctk.CTkLabel(row, text=label, width=110, anchor="w",
+                     font=ctk.CTkFont(size=12)).pack(side="left")
+        kwargs = {"textvariable": var, "height": 28}
+        if show:
+            kwargs["show"] = show
+        ctk.CTkEntry(row, **kwargs).pack(side="left", expand=True, fill="x")
+
     def _switch(self, parent, label, var, dot=None):
         row = ctk.CTkFrame(parent, fg_color="transparent")
         row.pack(fill="x", padx=14, pady=4)
@@ -219,6 +330,144 @@ class Controls(ctk.CTkToplevel):
 
     def _on_save_clicked(self):
         self._save_pending = True
+
+    def _on_obs_stop(self):
+        self._obs_stop_pending = True
+
+    def set_replay_state(self, st):
+        """Met à jour bandeau d'état + couleurs des boutons Dernier/Avant-dernier.
+        st = dict {current_seconds, has_last, has_prev, rotate_age}."""
+        if not hasattr(self, "_status_text"):
+            return
+        cur_s = float(st.get("current_seconds") or 0.0)
+        has_last = bool(st.get("has_last"))
+        has_prev = bool(st.get("has_prev"))
+        rotate_age = st.get("rotate_age")
+        flash = rotate_age is not None and rotate_age < 2.5
+
+        # Bandeau
+        if flash:
+            dot_col = ("#1e7d2e", "#7be08a")
+            text = "✓ Nouveau point capturé"
+            sub = f"{rotate_age:.1f}s"
+        elif cur_s > 0.05:
+            dot_col = ("#c24a00", "#ff9c5a")
+            text = "● Point en cours"
+            sub = f"{cur_s:.1f}s"
+        elif has_last:
+            dot_col = ("#1e7d2e", "#7be08a")
+            text = "Prêt à clipper"
+            sub = ""
+        else:
+            dot_col = ("gray45", "gray60")
+            text = "En attente d'un point…"
+            sub = ""
+        try:
+            self._status_dot.configure(text_color=dot_col)
+            self._status_text.configure(text=text)
+            self._status_subtext.configure(text=sub)
+            # Tinte la card en mode flash
+            if flash:
+                self._status_card.configure(fg_color=("#d5f0d5", "#1b3a22"))
+            else:
+                self._status_card.configure(fg_color=("gray85", "gray20"))
+        except Exception:
+            pass
+
+        # Boutons : bordure verte quand clipable, grisés sinon
+        self._style_save_button(self._btn_save_last, has_last)
+        self._style_save_button(self._btn_save_prev, has_prev)
+
+    def _style_save_button(self, btn, available):
+        try:
+            if available:
+                btn.configure(state="normal",
+                              fg_color=self._btn_default_fg,
+                              border_color=("#1e7d2e", "#7be08a"),
+                              text_color=("white", "white"))
+            else:
+                btn.configure(state="disabled",
+                              fg_color=("gray70", "gray30"),
+                              border_color=("gray70", "gray30"),
+                              text_color=("gray45", "gray55"))
+        except Exception:
+            pass
+
+    def set_on_replay_scene(self, on_scene):
+        """Affiche/cache le bouton 'Couper le replay' selon que OBS est sur la scène Replay."""
+        if not hasattr(self, "_obs_stop_row"):
+            return
+        on_scene = bool(on_scene)
+        if on_scene == self._obs_stop_visible:
+            return
+        if on_scene:
+            self._obs_stop_row.pack(fill="x", padx=14, pady=(0, 8))
+        else:
+            self._obs_stop_row.pack_forget()
+        self._obs_stop_visible = on_scene
+
+    def _on_promote(self):
+        self._promote_pending = True
+
+    def consume_promote(self):
+        if self._promote_pending:
+            self._promote_pending = False
+            return True
+        return False
+
+    def set_promote_status(self, text, ok=True, auto_clear_ms=4000):
+        if not hasattr(self, "_promote_status_label"):
+            return
+        color = ("#1e7d2e", "#7be08a") if ok else ("#a01919", "#ff6b6b")
+        self._promote_status_label.configure(text=text, text_color=color)
+        # Token pour annuler un clear précédent si on clique à nouveau entre-temps
+        token = self._promote_status_token = (self._promote_status_token + 1
+                                              if hasattr(self, "_promote_status_token")
+                                              else 1)
+        if auto_clear_ms and auto_clear_ms > 0:
+            def _clear():
+                if getattr(self, "_promote_status_token", None) == token:
+                    try:
+                        self._promote_status_label.configure(text="")
+                    except Exception:
+                        pass
+            try:
+                self.after(int(auto_clear_ms), _clear)
+            except Exception:
+                pass
+
+    def captures_keep(self):
+        try:
+            return max(1, int(str(self.var_captures_keep.get()).strip() or "20"))
+        except ValueError:
+            return 20
+
+    def consume_obs_stop(self):
+        if self._obs_stop_pending:
+            self._obs_stop_pending = False
+            return True
+        return False
+
+    def _on_obs_test(self):
+        if self._obs_test_cb is None:
+            self._set_obs_status("Aucun callback enregistré.", ok=False)
+            return
+        self._set_obs_status("Connexion en cours…", ok=None)
+        self._obs_test_cb(self.obs_settings())
+
+    def set_obs_test_callback(self, cb):
+        """cb(settings_dict) -> appelé quand l'utilisateur clique Tester."""
+        self._obs_test_cb = cb
+
+    def _set_obs_status(self, text, ok=True):
+        color = ("#1e7d2e", "#7be08a") if ok is True else \
+                ("#a01919", "#ff6b6b") if ok is False else \
+                ("gray45", "gray70")
+        self._obs_status_label.configure(text=text, text_color=color)
+
+    def set_obs_test_result(self, ok, message):
+        prefix = "✓ " if ok else "✗ "
+        self._set_obs_status(prefix + message, ok=ok)
 
     def _on_save_last(self):
         self._save_last_pending = True
@@ -362,6 +611,20 @@ class Controls(ctk.CTkToplevel):
     def captures_dir(self):
         return self.var_captures_dir.get().strip()
 
+    def obs_settings(self):
+        try:
+            port = int(str(self.var_obs_port.get()).strip() or "4455")
+        except ValueError:
+            port = 4455
+        return {
+            "enabled": bool(self.var_obs_enabled.get()),
+            "host": self.var_obs_host.get().strip() or "localhost",
+            "port": port,
+            "password": self.var_obs_password.get(),
+            "scene": self.var_obs_scene.get().strip() or "Replay",
+            "source": self.var_obs_source.get().strip() or "CABReplayMedia",
+        }
+
     def snapshot(self):
         trails = self.visible_trails()
         return {
@@ -372,6 +635,13 @@ class Controls(ctk.CTkToplevel):
             "show_trail_yellow": trails["yellow"],
             "show_trail_red": trails["red"],
             "captures_dir": self.captures_dir(),
+            "captures_keep": self.captures_keep(),
+            "obs_enabled": bool(self.var_obs_enabled.get()),
+            "obs_host": self.var_obs_host.get().strip() or "localhost",
+            "obs_port": self.obs_settings()["port"],
+            "obs_password": self.var_obs_password.get(),
+            "obs_scene": self.var_obs_scene.get().strip() or "Replay",
+            "obs_source": self.var_obs_source.get().strip() or "CABReplayMedia",
         }
 
     def quit_requested(self):
