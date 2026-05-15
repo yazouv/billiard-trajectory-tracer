@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.6](https://github.com/yazouv/billiard-trajectory-tracer/compare/v0.1.5...v0.1.6) (2026-05-15)
+
+
+### Features
+
+* **obs+ui:** lecture auto OBS WebSocket et Réglages 2 colonnes dynamiques ([d53db67](https://github.com/yazouv/billiard-trajectory-tracer/commit/d53db675554e32b068ccd73184c83a5104e04c15))
+* **recorder:** cap clip à 10s avec accélération, rotation FIFO + highlights ([cad6b91](https://github.com/yazouv/billiard-trajectory-tracer/commit/cad6b9161fe3e6c9698e76f604677cd858f85737))
+* **roi:** zone de jeu en quadrilatère 4 coins ajustables ([e0f575f](https://github.com/yazouv/billiard-trajectory-tracer/commit/e0f575f62301330c77fc76d760fc68c0011c8d14))
+
 ## [0.1.5](https://github.com/yazouv/billiard-trajectory-tracer/compare/v0.1.4...v0.1.5) (2026-05-15)
 
 
