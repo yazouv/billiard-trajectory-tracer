@@ -15,7 +15,9 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
-from updater import check_latest
+import tempfile
+import traceback
+from updater import get_latest_release, download, install_and_relaunch
 from version import GITHUB_REPO, __version__
 
 
@@ -52,7 +54,10 @@ class Launcher(ctk.CTkToplevel):
         self._ndi_lister = ndi_lister
         self.protocol("WM_DELETE_WINDOW", self._on_quit)
         _apply_icon(self)
-        self._update_info = None  # (tag, url) si update dispo
+        self._update_info = None  # dict release info, ou None
+        self._update_state = "idle"  # idle | downloading | ready | error
+        self._update_progress = 0.0
+        self._update_error = None
         self._build_home()
         self.after(50, self._raise)
         self._start_update_check()
@@ -97,8 +102,8 @@ class Launcher(ctk.CTkToplevel):
         self._update_banner.pack(fill="x", padx=24)
         self._render_update_banner()
 
-        content = ctk.CTkFrame(self, fg_color="transparent")
-        content.pack(expand=True, fill="both", padx=24, pady=16)
+        content = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        content.pack(expand=True, fill="both", padx=12, pady=8)
 
         self._card(content, "Ouvrir un fichier",
                    "Lire une vidéo enregistrée (mp4, mov, avi…).",
@@ -193,7 +198,7 @@ class Launcher(ctk.CTkToplevel):
     def _start_update_check(self):
         def worker():
             try:
-                self._update_info = check_latest(GITHUB_REPO, __version__)
+                self._update_info = get_latest_release(GITHUB_REPO, __version__)
             except Exception:
                 self._update_info = None
         threading.Thread(target=worker, daemon=True).start()
@@ -205,24 +210,102 @@ class Launcher(ctk.CTkToplevel):
         if self._update_info is not None:
             self._render_update_banner()
             return
-        # Pas encore de réponse : on reteste un peu plus tard
         self.after(800, self._poll_update_check)
 
     def _render_update_banner(self):
         for w in self._update_banner.winfo_children():
             w.destroy()
-        if not self._update_info:
+        info = self._update_info
+        if not info:
             return
-        tag, url = self._update_info
+
         bar = ctk.CTkFrame(self._update_banner, corner_radius=10,
                            fg_color=("#1e6e3a", "#1e6e3a"))
         bar.pack(fill="x", pady=(0, 8))
-        ctk.CTkLabel(bar, text=f"Nouvelle version disponible : {tag}",
-                     font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color="#ffffff").pack(side="left", padx=12, pady=8)
-        ctk.CTkButton(bar, text="Télécharger", width=110, height=28,
-                      fg_color="#ffffff", text_color="#1e6e3a", hover_color="#dddddd",
-                      command=lambda: webbrowser.open(url)).pack(side="right", padx=8, pady=6)
+
+        if self._update_state == "idle":
+            text = f"Nouvelle version disponible : {info['tag']}"
+            ctk.CTkLabel(bar, text=text,
+                         font=ctk.CTkFont(size=12, weight="bold"),
+                         text_color="#ffffff").pack(side="left", padx=12, pady=8)
+            if info.get("asset_url") and getattr(sys, "frozen", False):
+                ctk.CTkButton(bar, text="Installer", width=110, height=28,
+                              fg_color="#ffffff", text_color="#1e6e3a",
+                              hover_color="#dddddd",
+                              command=self._start_install).pack(side="right", padx=8, pady=6)
+            else:
+                # Pas d'asset ou pas en mode buildé : on garde le bouton Télécharger
+                ctk.CTkButton(bar, text="Télécharger", width=110, height=28,
+                              fg_color="#ffffff", text_color="#1e6e3a",
+                              hover_color="#dddddd",
+                              command=lambda: webbrowser.open(info["html_url"])).pack(side="right", padx=8, pady=6)
+
+        elif self._update_state == "downloading":
+            ctk.CTkLabel(bar, text=f"Téléchargement {info['tag']}…",
+                         font=ctk.CTkFont(size=12, weight="bold"),
+                         text_color="#ffffff").pack(anchor="w", padx=12, pady=(8, 2))
+            self._update_pb = ctk.CTkProgressBar(bar, height=10)
+            self._update_pb.set(self._update_progress)
+            self._update_pb.pack(fill="x", padx=12, pady=(0, 8))
+
+        elif self._update_state == "ready":
+            ctk.CTkLabel(bar, text="Mise à jour prête, relance en cours…",
+                         font=ctk.CTkFont(size=12, weight="bold"),
+                         text_color="#ffffff").pack(side="left", padx=12, pady=8)
+
+        elif self._update_state == "error":
+            ctk.CTkLabel(bar, text=f"Erreur update : {self._update_error}",
+                         font=ctk.CTkFont(size=11),
+                         text_color="#ffffff").pack(side="left", padx=12, pady=8)
+            ctk.CTkButton(bar, text="Réessayer", width=100, height=28,
+                          fg_color="#ffffff", text_color="#1e6e3a",
+                          command=self._start_install).pack(side="right", padx=8, pady=6)
+
+    def _start_install(self):
+        if not self._update_info or not self._update_info.get("asset_url"):
+            return
+        self._update_state = "downloading"
+        self._update_progress = 0.0
+        self._render_update_banner()
+
+        info = self._update_info
+
+        def worker():
+            try:
+                tmp = Path(tempfile.gettempdir()) / f"cabreplay-update-{info['tag']}.zip"
+                def on_progress(done, total):
+                    self._update_progress = (done / total) if total else 0.0
+                download(info["asset_url"], tmp, on_progress=on_progress)
+                # UI : passe en état "ready" puis lance l'install
+                self._update_state = "ready"
+                # install_and_relaunch fait sys.exit, donc on attend un poil
+                # pour que le banner se rafraîchisse avant.
+                self.after(200, lambda: self._do_install(tmp))
+            except Exception as e:
+                self._update_error = str(e)[:80]
+                self._update_state = "error"
+                traceback.print_exc()
+        threading.Thread(target=worker, daemon=True).start()
+
+        self.after(150, self._poll_install_progress)
+
+    def _poll_install_progress(self):
+        if not self.winfo_exists():
+            return
+        if self._update_state in ("downloading", "ready"):
+            self._render_update_banner()
+        if self._update_state == "downloading":
+            self.after(150, self._poll_install_progress)
+        elif self._update_state == "error":
+            self._render_update_banner()
+
+    def _do_install(self, zip_path: Path):
+        try:
+            install_and_relaunch(zip_path)  # fait sys.exit(0)
+        except Exception as e:
+            self._update_error = str(e)[:80]
+            self._update_state = "error"
+            self._render_update_banner()
 
     def _on_ndi_manual(self):
         name = self._ndi_manual.get().strip()
