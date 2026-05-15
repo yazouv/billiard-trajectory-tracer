@@ -2,6 +2,15 @@ import cv2
 import numpy as np
 
 
+def cyndilib_available():
+    """Renvoie True si cyndilib est importable."""
+    try:
+        import cyndilib  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 class VideoSource:
     """Lecture d'un fichier vidéo via cv2.VideoCapture."""
 
@@ -26,8 +35,8 @@ class NdiSource:
     def __init__(self, source_name, fps_hint=60.0):
         from cyndilib.finder import Finder
         from cyndilib.receiver import Receiver
-        from cyndilib.wrapper.ndi_recv import RecvBandwidth, RecvColorFormat
         from cyndilib.video_frame import VideoFrameSync
+        from cyndilib.wrapper.ndi_recv import RecvBandwidth, RecvColorFormat
 
         # Découverte (un peu plus longue) puis résolution du nom
         self._finder = Finder()
@@ -108,8 +117,9 @@ class NdiSource:
 
 def list_ndi_sources(timeout=8.0, poll_interval=0.3):
     """Découverte des sources NDI : callback + polling, attend jusqu'au timeout."""
-    import time
     import threading
+    import time
+
     from cyndilib.finder import Finder
 
     finder = Finder()

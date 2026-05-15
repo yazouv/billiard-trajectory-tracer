@@ -2,18 +2,17 @@ import sys
 import traceback
 from pathlib import Path
 
-import cv2
 import customtkinter as ctk
+import cv2
 
 import config
-from capture import VideoSource, NdiSource, list_ndi_sources
+from capture import NdiSource, VideoSource, list_ndi_sources
 from controls import Controls
-from detector import detect_balls, DRAW_COLORS_BGR
+from detector import DRAW_COLORS_BGR, detect_balls
 from launcher import show_launcher
 from recorder import PointRecorder
-from table import select_table_rect, rect_to_mask
+from table import rect_to_mask, select_table_rect
 from tracker import Trajectories
-
 
 WINDOW = "CAB Replay"
 
@@ -66,13 +65,19 @@ def main(default_video):
         pass
 
     try:
-        choice = pick_source(tk_root, default_video)
-        if choice is None:
-            return
-
-        cfg = config.load()
-        controls = Controls(tk_root, cfg)
-        _run(tk_root, choice, cfg, controls, default_video)
+        while True:
+            choice = pick_source(tk_root, default_video)
+            if choice is None:
+                return
+            try:
+                cfg = config.load()
+                controls = Controls(tk_root, cfg)
+                _run(tk_root, choice, cfg, controls, default_video)
+                break
+            except RuntimeError as e:
+                print(f"Source indisponible : {e}")
+                # On retourne au menu pour permettre un autre choix
+                continue
     finally:
         try:
             tk_root.destroy()

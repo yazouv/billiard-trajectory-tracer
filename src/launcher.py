@@ -8,16 +8,16 @@ Renvoie :
 from __future__ import annotations
 
 import sys
+import tempfile
 import threading
+import traceback
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog
 
 import customtkinter as ctk
 
-import tempfile
-import traceback
-from updater import get_latest_release, download, install_and_relaunch
+from updater import download, get_latest_release, install_and_relaunch
 from version import GITHUB_REPO, __version__
 
 
@@ -166,6 +166,30 @@ class Launcher(ctk.CTkToplevel):
         self._ndi_refresh_btn.pack(side="right")
 
         self._header("Flux NDI", "Sources détectées sur le réseau")
+
+        # Si cyndilib n'est pas dispo, affiche un message dédié plutôt qu'une stacktrace
+        try:
+            from capture import cyndilib_available
+            ndi_ok = cyndilib_available()
+        except Exception:
+            ndi_ok = False
+        if not ndi_ok:
+            body = ctk.CTkFrame(self, fg_color="transparent")
+            body.pack(expand=True, fill="both", padx=24, pady=8)
+            card = ctk.CTkFrame(body, corner_radius=10)
+            card.pack(fill="x", pady=(4, 8))
+            ctk.CTkLabel(card, text="NDI indisponible",
+                         font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", padx=14, pady=(10, 4))
+            ctk.CTkLabel(
+                card,
+                text=("La bibliothèque cyndilib n'est pas installée, ou le NDI\n"
+                      "Runtime système est manquant.\n\n"
+                      "Installe NDI 6 Tools (newtek.com/ndi) puis relance l'app."),
+                font=ctk.CTkFont(size=11),
+                justify="left",
+                text_color=("gray40", "gray80")).pack(anchor="w", padx=14, pady=(0, 12))
+            self._ndi_refresh_btn.configure(state="disabled")
+            return
 
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(expand=True, fill="both", padx=24, pady=8)
