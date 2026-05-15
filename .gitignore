@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+
+# Fichiers volumineux / spécifiques à la machine
+datas/*.mp4
+config.json
+
+# Captures de debug
+Erreurs/
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
