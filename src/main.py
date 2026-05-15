@@ -142,20 +142,7 @@ def _run(tk_root, choice, cfg, controls, default_video):
     frame = first
     detections = {}
 
-    # Trackbar de seek pour les sources seekables (fichiers vidéo)
-    seek_state = {"dragging_until": 0.0}
-    if getattr(src, "seekable", False) and src.frame_count > 1:
-        def _on_seek(pos):
-            try:
-                src.seek(pos)
-                trails.clear()
-            except Exception:
-                pass
-            # Empêche la boucle d'écraser la position de l'utilisateur juste après
-            import time as _t
-            seek_state["dragging_until"] = _t.monotonic() + 0.3
-        cv2.createTrackbar("Position", WINDOW, 0,
-                           max(1, src.frame_count - 1), _on_seek)
+    # Le seek se fait via le slider de la fenêtre Réglages (controls)
 
     rec_fps = src.fps if src.fps >= 5 else 30.0
     recorder = PointRecorder(_ensure_dir(controls.captures_dir()), fps=rec_fps)
@@ -191,14 +178,25 @@ def _run(tk_root, choice, cfg, controls, default_video):
             if cleared:
                 recorder.rotate()
 
-        # Met à jour la trackbar de position si non draggée
-        if getattr(src, "seekable", False) and not paused:
-            import time as _t
-            if _t.monotonic() >= seek_state["dragging_until"]:
-                try:
-                    cv2.setTrackbarPos("Position", WINDOW, src.position)
-                except cv2.error:
-                    pass
+        # Synchronise l'état de lecture vers Réglages (slider + time label)
+        controls.set_playback_info(
+            position=getattr(src, "position", 0),
+            total=getattr(src, "frame_count", 0),
+            fps=src.fps,
+            seekable=getattr(src, "seekable", False),
+        )
+
+        # Demande de seek faite par l'utilisateur sur le slider
+        seek_to = controls.consume_seek()
+        if seek_to is not None:
+            try:
+                src.seek(seek_to)
+                trails.clear()
+            except Exception as e:
+                print(f"Seek error: {e}")
+
+        # Synchronise pause depuis Réglages
+        paused = controls.is_paused()
 
         cv2.imshow(WINDOW, display)
         controls.refresh()
@@ -224,7 +222,8 @@ def _run(tk_root, choice, cfg, controls, default_video):
         if key in (ord('q'), 27):
             break
         elif key == ord(' '):
-            paused = not paused
+            controls.toggle_pause()
+            paused = controls.is_paused()
         elif key == ord('c'):
             trails.clear()
         elif key == ord('r'):

@@ -36,10 +36,9 @@ class Controls(ctk.CTkToplevel):
     def __init__(self, master, initial):
         super().__init__(master)
         self.title("Réglages — CAB Replay")
-        self.geometry("380x740")
-        # Layout fixe : on bloque le resize pour éviter une réentrance tkinter
-        # qui peut crasher la boucle principale OpenCV pendant les drags.
-        self.resizable(False, False)
+        self.geometry("420x820")
+        self.minsize(380, 500)
+        self.resizable(True, True)
         self.protocol("WM_DELETE_WINDOW", self._on_close_attempt)
         p = _icon_path()
         if p:
@@ -54,6 +53,15 @@ class Controls(ctk.CTkToplevel):
         self._key_queue = []  # touches récupérées via tkinter, drainées par main.py
         self._last_update_ts = 0.0
         self.var_captures_dir = ctk.StringVar(value=str(initial.get("captures_dir", "")))
+
+        # Lecture (slider + play/pause)
+        self._paused = False
+        self._seek_request = None        # frame_idx à demander à main.py
+        self._slider_programmatic = False
+        self._playback_total = 0
+        self._playback_position = 0
+        self._playback_fps = 30.0
+        self._playback_seekable = False
         # Bind les raccourcis app pour qu'ils marchent même si Reglages a le focus
         for key in ("space", "m", "M", "r", "R", "c", "C", "s", "S",
                     "q", "Q", "Escape"):
@@ -73,14 +81,24 @@ class Controls(ctk.CTkToplevel):
 
     # ---------- UI ----------
     def _build_ui(self):
-        outer = ctk.CTkFrame(self, fg_color="transparent")
-        outer.pack(fill="both", expand=True, padx=18, pady=18)
-
-        ctk.CTkLabel(outer, text="Réglages",
+        # Header fixe en haut + footer (bouton Save) en bas + scrollable au milieu
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.pack(fill="x", padx=18, pady=(18, 8))
+        ctk.CTkLabel(header, text="Réglages",
                      font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
-        ctk.CTkLabel(outer, text="Modifie l'affichage en direct.",
-                     font=ctk.CTkFont(size=12),
-                     text_color=("gray50", "gray70")).pack(anchor="w", pady=(2, 16))
+
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.pack(fill="x", side="bottom", padx=18, pady=12)
+        ctk.CTkButton(footer, text="Sauvegarder la config", height=38,
+                      command=self._on_save_clicked).pack(fill="x")
+
+        outer = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        outer.pack(fill="both", expand=True, padx=8, pady=(0, 4))
+
+        # Section Lecture (slider + play/pause), masquée si la source ne supporte pas
+        self._playback_section = self._section(outer, "Lecture")
+        self._build_playback_ui(self._playback_section)
+        self._playback_section.pack_forget()  # caché tant que main.py n'a pas signalé une source seekable
 
         # Section Affichage
         aff = self._section(outer, "Affichage")
@@ -153,9 +171,27 @@ class Controls(ctk.CTkToplevel):
                          text_color=("gray45", "gray75")).pack(anchor="w", padx=14)
         ctk.CTkLabel(shortcuts, text="").pack(pady=2)
 
-        # Save button
-        ctk.CTkButton(outer, text="Sauvegarder la config", height=38,
-                      command=self._on_save_clicked).pack(fill="x", side="bottom")
+    def _build_playback_ui(self, parent):
+        # Ligne 1 : bouton play/pause + label MM:SS / MM:SS
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=(6, 4))
+        self._play_btn = ctk.CTkButton(
+            row, text="⏸  Pause", width=110, height=32,
+            command=self._on_toggle_play)
+        self._play_btn.pack(side="left")
+        self._time_label = ctk.CTkLabel(
+            row, text="00:00 / 00:00",
+            font=ctk.CTkFont(size=12, weight="bold"))
+        self._time_label.pack(side="right")
+
+        # Ligne 2 : slider de position
+        self._slider_var = ctk.DoubleVar(value=0.0)
+        self._position_slider = ctk.CTkSlider(
+            parent, from_=0, to=1, number_of_steps=1000,
+            variable=self._slider_var,
+            command=self._on_slider_move,
+        )
+        self._position_slider.pack(fill="x", padx=14, pady=(2, 12))
 
     def _section(self, parent, title):
         card = ctk.CTkFrame(parent, corner_radius=10)
@@ -187,6 +223,83 @@ class Controls(ctk.CTkToplevel):
 
     def _on_save_prev(self):
         self._save_prev_pending = True
+
+    def _on_toggle_play(self):
+        self._paused = not self._paused
+        self._refresh_play_button()
+
+    def _refresh_play_button(self):
+        if not hasattr(self, "_play_btn"):
+            return
+        if self._paused:
+            self._play_btn.configure(text="▶  Lecture")
+        else:
+            self._play_btn.configure(text="⏸  Pause")
+
+    def _on_slider_move(self, value):
+        # Si on a mis le slider à jour nous-même (suivi de lecture), on ignore
+        if self._slider_programmatic:
+            return
+        self._seek_request = int(float(value))
+
+    # --- API exposée à main.py ---
+    def is_paused(self):
+        return self._paused
+
+    def toggle_pause(self):
+        self._on_toggle_play()
+
+    def set_paused(self, value):
+        self._paused = bool(value)
+        self._refresh_play_button()
+
+    def consume_seek(self):
+        r = self._seek_request
+        self._seek_request = None
+        return r
+
+    def set_playback_info(self, position, total, fps, seekable):
+        """Appelé par main.py à chaque frame pour mettre à jour le slider/time."""
+        self._playback_fps = max(float(fps), 1.0)
+        self._playback_seekable = bool(seekable) and total > 0
+
+        if self._playback_seekable:
+            # Affiche la section si pas encore
+            if not self._playback_section.winfo_ismapped():
+                # Reaffiche au-dessus de tout, donc on doit la repack en debut.
+                # CTkScrollableFrame ne supporte pas insert ; on la pack avant tout
+                # le reste. Comme l'UI est figée après _build_ui, on accepte
+                # qu'elle apparaisse à la fin.
+                self._playback_section.pack(fill="x", pady=(0, 10), before=None)
+            self._playback_total = int(total)
+            self._playback_position = int(position)
+            # Slider 0..total-1, échelle adaptée
+            try:
+                if abs(self._position_slider.cget("to") - max(1, total - 1)) > 0.5:
+                    self._position_slider.configure(
+                        to=max(1, total - 1),
+                        number_of_steps=min(1000, max(1, total - 1)),
+                    )
+            except Exception:
+                pass
+            # Mise à jour de la position sans déclencher le callback
+            self._slider_programmatic = True
+            try:
+                self._slider_var.set(self._playback_position)
+            finally:
+                self._slider_programmatic = False
+            # Time label
+            cur = self._fmt_time(self._playback_position / self._playback_fps)
+            tot = self._fmt_time(self._playback_total / self._playback_fps)
+            self._time_label.configure(text=f"{cur} / {tot}")
+        else:
+            if self._playback_section.winfo_ismapped():
+                self._playback_section.pack_forget()
+
+    @staticmethod
+    def _fmt_time(seconds):
+        s = int(max(0, seconds))
+        return f"{s // 60:02d}:{s % 60:02d}"
 
     def _on_pick_dir(self):
         current = self.var_captures_dir.get() or None

@@ -291,6 +291,7 @@ class Launcher(ctk.CTkToplevel):
             return
         self._update_state = "downloading"
         self._update_progress = 0.0
+        self._update_zip_path = None
         self._render_update_banner()
 
         info = self._update_info
@@ -299,29 +300,33 @@ class Launcher(ctk.CTkToplevel):
             try:
                 tmp = Path(tempfile.gettempdir()) / f"cabreplay-update-{info['tag']}.zip"
                 def on_progress(done, total):
+                    # affectation atomique : safe inter-thread
                     self._update_progress = (done / total) if total else 0.0
                 download(info["asset_url"], tmp, on_progress=on_progress)
-                # UI : passe en état "ready" puis lance l'install
+                self._update_zip_path = tmp
                 self._update_state = "ready"
-                # install_and_relaunch fait sys.exit, donc on attend un poil
-                # pour que le banner se rafraîchisse avant.
-                self.after(200, lambda: self._do_install(tmp))
             except Exception as e:
                 self._update_error = str(e)[:80]
                 self._update_state = "error"
                 traceback.print_exc()
         threading.Thread(target=worker, daemon=True).start()
 
+        # Polling depuis le main thread (jamais d'appel tkinter depuis worker)
         self.after(150, self._poll_install_progress)
 
     def _poll_install_progress(self):
         if not self.winfo_exists():
             return
-        if self._update_state in ("downloading", "ready"):
-            self._render_update_banner()
         if self._update_state == "downloading":
+            self._render_update_banner()
             self.after(150, self._poll_install_progress)
-        elif self._update_state == "error":
+            return
+        if self._update_state == "ready":
+            self._render_update_banner()
+            # Laisse le temps au banner d'afficher avant de tuer le process
+            self.after(400, lambda: self._do_install(self._update_zip_path))
+            return
+        if self._update_state == "error":
             self._render_update_banner()
 
     def _do_install(self, zip_path: Path):
