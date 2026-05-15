@@ -47,8 +47,8 @@ class Launcher(ctk.CTkToplevel):
     def __init__(self, master, default_video=None, ndi_lister=None):
         super().__init__(master)
         self.title("CAB Replay")
-        self.geometry("560x460")
-        self.minsize(560, 460)
+        self.geometry("580x600")
+        self.minsize(560, 560)
         self.result = None
         self._default_video = default_video
         self._ndi_lister = ndi_lister
@@ -102,8 +102,8 @@ class Launcher(ctk.CTkToplevel):
         self._update_banner.pack(fill="x", padx=24)
         self._render_update_banner()
 
-        content = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        content.pack(expand=True, fill="both", padx=12, pady=8)
+        content = ctk.CTkFrame(self, fg_color="transparent")
+        content.pack(fill="x", padx=24, pady=8)
 
         self._card(content, "Ouvrir un fichier",
                    "Lire une vidéo enregistrée (mp4, mov, avi…).",

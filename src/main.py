@@ -269,6 +269,18 @@ def _default_video_path():
 
 
 if __name__ == "__main__":
+    # En exe windowed (console=False), sys.stdout/stderr peuvent etre None
+    # et faire crasher les print(). On redirige vers un fichier log.
+    if getattr(sys, "frozen", False):
+        log_path = Path(sys.executable).resolve().parent / "cabreplay.log"
+        try:
+            sys.stdout = open(log_path, "a", buffering=1, encoding="utf-8")
+            sys.stderr = sys.stdout
+        except OSError:
+            import os
+            sys.stdout = open(os.devnull, "w")
+            sys.stderr = sys.stdout
+
     default = sys.argv[1] if len(sys.argv) > 1 else str(_default_video_path())
     try:
         main(default)
@@ -281,5 +293,4 @@ if __name__ == "__main__":
                     traceback.print_exc(file=f)
             except OSError:
                 pass
-            input("Appuyez sur Entree pour quitter...")
         raise
