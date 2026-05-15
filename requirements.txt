@@ -1,2 +1,4 @@
 opencv-python>=4.10
 numpy>=1.26
+cyndilib>=0.0.7
+customtkinter>=5.2

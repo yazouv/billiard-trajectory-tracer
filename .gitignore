@@ -13,3 +13,13 @@ Erreurs/
 .idea/
 Thumbs.db
 .DS_Store
+dist/
+build/
+main.spec
+
+# Sorties locales
+captures/
+todo.md
+
+# Claude Code workspace
+.claude/
